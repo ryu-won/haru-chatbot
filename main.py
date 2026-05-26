@@ -219,7 +219,7 @@ PHOTO_CAPTIONS = {
 }
 
 
-PHOTO_STAR_PRICE = 5  # Stars to unlock a photo
+PHOTO_STAR_PRICE = 100  # Stars to unlock a photo
 
 
 async def maybe_send_photo(update: Update, user_id: int) -> None:
