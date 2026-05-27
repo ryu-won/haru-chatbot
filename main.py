@@ -156,6 +156,29 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("\n".join(lines))
 
 
+async def revenue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if ADMIN_USER_ID and user_id != ADMIN_USER_ID:
+        return
+
+    try:
+        transactions = await context.bot.get_star_transactions(limit=100)
+        total_stars = sum(t.amount for t in transactions.transactions)
+        lines = [
+            f"Total Stars earned: {total_stars}",
+            f"Total transactions: {len(transactions.transactions)}",
+            "",
+        ]
+        for t in transactions.transactions[:10]:
+            lines.append(f"  {t.date.strftime('%Y-%m-%d %H:%M')} | {t.amount} Stars")
+        if len(transactions.transactions) > 10:
+            lines.append(f"  ... and {len(transactions.transactions) - 10} more")
+        await update.message.reply_text("\n".join(lines))
+    except Exception:
+        logger.exception("Error fetching star transactions")
+        await update.message.reply_text("Failed to fetch revenue data.")
+
+
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     lang = user_language.get(user_id, "ja")
@@ -324,6 +347,7 @@ def main() -> None:
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("revenue", revenue))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
