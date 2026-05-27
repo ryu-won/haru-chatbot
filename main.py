@@ -74,10 +74,66 @@ FREE_DAILY_LIMIT = 5
 PREMIUM_STAR_PRICE = 100  # Telegram Stars (roughly $1.99)
 
 conversation_history: dict[int, list[dict[str, str]]] = defaultdict(list)
-user_language: dict[int, str] = {}
 daily_usage: dict[int, dict] = {}
-premium_users: set[int] = set()
-sent_photos: dict[int, set[str]] = defaultdict(set)
+
+# --- Persistent storage ---
+DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR.mkdir(exist_ok=True)
+DB_PATH = DATA_DIR / "db.json"
+
+
+def load_db() -> dict:
+    if DB_PATH.exists():
+        with open(DB_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"users": {}, "photo_purchases": {}, "daily_active": {}, "premium_users": []}
+
+
+def save_db(db: dict) -> None:
+    with open(DB_PATH, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
+
+
+def get_or_create_user(db: dict, user_id: int) -> dict:
+    uid = str(user_id)
+    if uid not in db["users"]:
+        db["users"][uid] = {
+            "lang": "ja",
+            "first_visit": datetime.now().isoformat(),
+            "last_visit": datetime.now().isoformat(),
+            "total_messages": 0,
+            "premium": False,
+            "sent_photos": [],
+        }
+    return db["users"][uid]
+
+
+def track_message(user_id: int) -> None:
+    db = load_db()
+    user = get_or_create_user(db, user_id)
+    user["total_messages"] += 1
+    user["last_visit"] = datetime.now().isoformat()
+    today = date.today().isoformat()
+    if today not in db["daily_active"]:
+        db["daily_active"][today] = []
+    uid = str(user_id)
+    if uid not in db["daily_active"][today]:
+        db["daily_active"][today].append(uid)
+    save_db(db)
+
+
+def track_photo_purchase(photo_name: str) -> None:
+    db = load_db()
+    if photo_name not in db["photo_purchases"]:
+        db["photo_purchases"][photo_name] = 0
+    db["photo_purchases"][photo_name] += 1
+    save_db(db)
+
+
+db = load_db()
+user_language: dict[int, str] = {int(uid): u["lang"] for uid, u in db["users"].items()}
+premium_users: set[int] = {int(uid) for uid, u in db["users"].items() if u.get("premium")}
+sent_photos: dict[int, set[str]] = defaultdict(set, {int(uid): set(u.get("sent_photos", [])) for uid, u in db["users"].items()})
 
 LIMIT_MESSAGES = {
     "ja": "...今日はもうたくさん話したね。\n続けたいなら、プレミアムに。\n/subscribe で確認して。",
@@ -134,6 +190,11 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     lang = query.data.replace("lang_", "")
     user_language[user_id] = lang
 
+    db = load_db()
+    user = get_or_create_user(db, user_id)
+    user["lang"] = lang
+    save_db(db)
+
     await query.edit_message_text(INTRO_MESSAGES[lang])
 
 
@@ -142,19 +203,34 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if ADMIN_USER_ID and user_id != ADMIN_USER_ID:
         return
 
-    total_users = len(conversation_history)
+    db = load_db()
+    users = db["users"]
+    total_users = len(users)
     lang_counts = defaultdict(int)
-    for uid, lang in user_language.items():
-        lang_counts[lang] += 1
+    total_msgs = 0
+    for u in users.values():
+        lang_counts[u.get("lang", "ja")] += 1
+        total_msgs += u.get("total_messages", 0)
+    premium_count = sum(1 for u in users.values() if u.get("premium"))
+
+    today = date.today().isoformat()
+    dau = len(db.get("daily_active", {}).get(today, []))
+
+    photo_stats = db.get("photo_purchases", {})
+    photo_lines = [f"  {name}: {count}" for name, count in sorted(photo_stats.items(), key=lambda x: -x[1])]
 
     lines = [
-        f"Total users: {total_users}",
-        f"  ja: {lang_counts.get('ja', 0)}",
-        f"  ko: {lang_counts.get('ko', 0)}",
-        f"  en: {lang_counts.get('en', 0)}",
-        f"  (no selection): {total_users - len(user_language)}",
-        f"Premium users: {len(premium_users)}",
-    ]
+        f"=== Users ===",
+        f"Total: {total_users} | Premium: {premium_count}",
+        f"  ja: {lang_counts.get('ja', 0)} | ko: {lang_counts.get('ko', 0)} | en: {lang_counts.get('en', 0)}",
+        f"",
+        f"=== Activity ===",
+        f"Total messages: {total_msgs}",
+        f"Today active: {dau}",
+        f"",
+        f"=== Photo Purchases ===",
+    ] + (photo_lines if photo_lines else ["  (none yet)"])
+
     await update.message.reply_text("\n".join(lines))
 
 
@@ -216,6 +292,12 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     premium_users.add(user_id)
+
+    db = load_db()
+    user = get_or_create_user(db, user_id)
+    user["premium"] = True
+    save_db(db)
+
     lang = user_language.get(user_id, "ja")
     success = {
         "ja": "...ありがとう。\nこれからもっと話せるね。たまに写真も送るから。",
@@ -260,6 +342,14 @@ async def maybe_send_photo(update: Update, user_id: int) -> None:
 
     chosen = random.choice(unseen)
     sent_photos[user_id].add(chosen.name)
+
+    db = load_db()
+    user = get_or_create_user(db, user_id)
+    user["sent_photos"] = list(sent_photos[user_id])
+    save_db(db)
+
+    track_photo_purchase(chosen.stem)
+
     lang = user_language.get(user_id, "ja")
     captions = PHOTO_CAPTIONS.get(chosen.stem)
     if captions:
@@ -309,6 +399,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         await update.message.reply_text(reply)
         increment_usage(user_id)
+        track_message(user_id)
 
         usage = daily_usage.get(user_id, {})
         msg_count = usage.get("count", 0)
