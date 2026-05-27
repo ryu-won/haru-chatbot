@@ -1,7 +1,8 @@
 import os
+import json
 import logging
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 import random
 
@@ -76,6 +77,7 @@ conversation_history: dict[int, list[dict[str, str]]] = defaultdict(list)
 user_language: dict[int, str] = {}
 daily_usage: dict[int, dict] = {}
 premium_users: set[int] = set()
+sent_photos: dict[int, set[str]] = defaultdict(set)
 
 LIMIT_MESSAGES = {
     "ja": "...今日はもうたくさん話したね。\n続けたいなら、プレミアムに。\n/subscribe で確認して。",
@@ -250,7 +252,14 @@ async def maybe_send_photo(update: Update, user_id: int) -> None:
     images = list(photos_dir.glob("*.jpg")) + list(photos_dir.glob("*.png"))
     if not images:
         return
-    chosen = random.choice(images)
+
+    # Filter out already sent photos
+    unseen = [img for img in images if img.name not in sent_photos[user_id]]
+    if not unseen:
+        return  # All photos already sent
+
+    chosen = random.choice(unseen)
+    sent_photos[user_id].add(chosen.name)
     lang = user_language.get(user_id, "ja")
     captions = PHOTO_CAPTIONS.get(chosen.stem)
     if captions:
