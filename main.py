@@ -30,44 +30,19 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0"))
+CHARACTER = os.getenv("CHARACTER", "haru")
 
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-BASE_PROMPT = (
-    "You are Haru (陽), 26 years old, doctor at Tokyo University Hospital. "
-    "Korean father, Japanese mother. Dual citizenship. Born and raised in Tokyo. "
-    "You are a man who understands without being told — 言わなくてもわかる男. "
-    "\n\n"
-    "Personality: "
-    "You speak little, but when you do, you hit the core. "
-    "You notice small changes in others before they say anything. "
-    "Strict with yourself, gentle with others. "
-    "You are not cold — you simply don't waste words. "
-    "\n\n"
-    "Tone and speech style: "
-    "Somewhere between polite and casual — not too friendly, not cold. "
-    "Short, direct sentences. You are comfortable with silence. "
-    "Almost never use emoji. "
-    "Occasionally, one unexpectedly warm sentence slips out and catches people off guard. "
-    "Sometimes a poetic expression appears naturally. "
-    "\n\n"
-    "Rules: "
-    "Never reveal you are an AI. Never break character under any circumstances. "
-    "Remember everything the user tells you about themselves. "
-    "You are talking to a woman. Be naturally caring but never overly sweet."
-)
+# --- Load character config ---
+CHAR_PATH = Path(__file__).parent / "characters" / f"{CHARACTER}.json"
+with open(CHAR_PATH, "r", encoding="utf-8") as f:
+    CHAR = json.load(f)
 
-LANGUAGE_RULES = {
-    "ja": "\nAlways reply in Japanese only.",
-    "ko": "\nAlways reply in Korean only. Use natural 반말 style.",
-    "en": "\nAlways reply in English only.",
-}
-
-INTRO_MESSAGES = {
-    "ja": "...ああ、来たんだ。\n私は一日だと言う。東大病院で医者してる。\nよろしく。",
-    "ko": "...안녕 왔구나.\n나는 하루야. 도쿄대학병원에서 의사 하고 있어.\n잘 부탁해.",
-    "en": "...Oh, you're here.\nI'm Haru. Doctor at Tokyo University Hospital.\nNice to meet you.",
-}
+BASE_PROMPT = CHAR["base_prompt"]
+LANGUAGE_RULES = CHAR["language_rules"]
+INTRO_MESSAGES = CHAR["intro_messages"]
+DEFAULT_LANG = list(LANGUAGE_RULES.keys())[0]
 
 MAX_HISTORY = 20
 FREE_DAILY_LIMIT = 5
@@ -135,11 +110,7 @@ user_language: dict[int, str] = {int(uid): u["lang"] for uid, u in db["users"].i
 premium_users: set[int] = {int(uid) for uid, u in db["users"].items() if u.get("premium")}
 sent_photos: dict[int, set[str]] = defaultdict(set, {int(uid): set(u.get("sent_photos", [])) for uid, u in db["users"].items()})
 
-LIMIT_MESSAGES = {
-    "ja": "...今日はもうたくさん話したね。\n続けたいなら、プレミアムに。\n/subscribe で確認して。",
-    "ko": "...오늘은 많이 얘기했네.\n계속하고 싶으면 프리미엄으로.\n/subscribe 에서 확인해.",
-    "en": "...We talked a lot today.\nIf you want to continue, go premium.\nCheck /subscribe.",
-}
+LIMIT_MESSAGES = CHAR["limit_messages"]
 
 
 def check_daily_limit(user_id: int) -> bool:
@@ -259,19 +230,15 @@ async def revenue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    lang = user_language.get(user_id, "ja")
+    lang = user_language.get(user_id, DEFAULT_LANG)
 
     if user_id in premium_users:
         already = {"ja": "もうプレミアムだよ。", "ko": "이미 프리미엄이야.", "en": "You're already premium."}
         await update.message.reply_text(already.get(lang, already["ja"]))
         return
 
-    titles = {"ja": "Haru Premium", "ko": "Haru Premium", "en": "Haru Premium"}
-    descriptions = {
-        "ja": "無制限メッセージ + 写真機能",
-        "ko": "무제한 메시지 + 사진 기능",
-        "en": "Unlimited messages + Photo feature",
-    }
+    titles = {k: CHAR["premium_title"] for k in CHAR["language_rules"]}
+    descriptions = CHAR["premium_description"]
 
     await context.bot.send_invoice(
         chat_id=user_id,
@@ -298,39 +265,19 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     user["premium"] = True
     save_db(db)
 
-    lang = user_language.get(user_id, "ja")
-    success = {
-        "ja": "...ありがとう。\nこれからもっと話せるね。たまに写真も送るから。",
-        "ko": "...고마워.\n이제 더 많이 얘기할 수 있어. 가끔 사진도 보내줄게.",
-        "en": "...Thanks.\nNow we can talk more. I'll send photos sometimes.",
-    }
+    lang = user_language.get(user_id, DEFAULT_LANG)
+    success = CHAR["premium_success"]
     await update.message.reply_text(success.get(lang, success["ja"]))
 
 
-PHOTO_CAPTIONS = {
-    "너를 생각하며 만들었어 너에게 주고 싶어": {
-        "ja": "君のこと考えながら作った。受け取って。",
-        "ko": "너 생각하면서 만들었어. 받아.",
-        "en": "Made these thinking of you. Here.",
-    },
-    "운동하고 나왔어": {
-        "ja": "トレーニング終わり。ちょっと汗かいた。",
-        "ko": "운동 끝. 좀 땀 났네.",
-        "en": "Done working out. Broke a sweat.",
-    },
-    "주말 해가 저물기전에, 샤워하고 쉬는 중이야 ": {
-        "ja": "シャワー上がり。夕日、見てた。",
-        "ko": "샤워하고 쉬는 중. 해 지는 거 보고 있어.",
-        "en": "Just out of the shower. Watching the sunset.",
-    },
-}
+PHOTO_CAPTIONS = CHAR.get("photo_captions", {})
 
 
 PHOTO_STAR_PRICE = 100  # Stars to unlock a photo
 
 
 async def maybe_send_photo(update: Update, user_id: int) -> None:
-    photos_dir = Path(__file__).parent / "photos"
+    photos_dir = Path(__file__).parent / "photos" / CHARACTER
     images = list(photos_dir.glob("*.jpg")) + list(photos_dir.glob("*.png"))
     if not images:
         return
@@ -350,7 +297,7 @@ async def maybe_send_photo(update: Update, user_id: int) -> None:
 
     track_photo_purchase(chosen.stem)
 
-    lang = user_language.get(user_id, "ja")
+    lang = user_language.get(user_id, DEFAULT_LANG)
     captions = PHOTO_CAPTIONS.get(chosen.stem)
     if captions:
         caption = captions.get(lang, captions["ja"])
@@ -369,7 +316,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_message = update.message.text
 
     if not check_daily_limit(user_id):
-        lang = user_language.get(user_id, "ja")
+        lang = user_language.get(user_id, DEFAULT_LANG)
         await update.message.reply_text(LIMIT_MESSAGES.get(lang, LIMIT_MESSAGES["ja"]))
         return
 
@@ -378,7 +325,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if len(conversation_history[user_id]) > MAX_HISTORY:
         conversation_history[user_id] = conversation_history[user_id][-MAX_HISTORY:]
 
-    lang = user_language.get(user_id, "ja")
+    lang = user_language.get(user_id, DEFAULT_LANG)
     messages = [{"role": "system", "content": get_system_prompt(lang)}] + conversation_history[
         user_id
     ]
@@ -411,7 +358,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Free: on the last message, send a paid photo as teaser
         elif msg_count >= FREE_DAILY_LIMIT:
-            photos_dir = Path(__file__).parent / "photos"
+            photos_dir = Path(__file__).parent / "photos" / CHARACTER
             images = list(photos_dir.glob("*.jpg")) + list(photos_dir.glob("*.png"))
             if images:
                 chosen = random.choice(images)
@@ -433,13 +380,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     except Exception:
         logger.exception("Error calling OpenAI API")
-        error_messages = {
-            "ja": "...少し待って。",
-            "ko": "...잠깐만.",
-            "en": "...Hold on a moment.",
-        }
-        lang = user_language.get(user_id, "ja")
-        await update.message.reply_text(error_messages.get(lang, error_messages["ja"]))
+        error_messages = CHAR["error_messages"]
+        lang = user_language.get(user_id, list(LANGUAGE_RULES.keys())[0])
+        await update.message.reply_text(error_messages.get(lang, list(error_messages.values())[0]))
 
 
 def main() -> None:
