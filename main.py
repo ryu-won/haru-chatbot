@@ -73,7 +73,7 @@ def get_or_create_user(db: dict, user_id: int) -> dict:
     uid = str(user_id)
     if uid not in db["users"]:
         db["users"][uid] = {
-            "lang": "ja",
+            "lang": DEFAULT_LANG,
             "first_visit": datetime.now().isoformat(),
             "last_visit": datetime.now().isoformat(),
             "total_messages": 0,
@@ -132,7 +132,7 @@ def increment_usage(user_id: int) -> None:
 
 
 def get_system_prompt(lang: str) -> str:
-    return BASE_PROMPT + LANGUAGE_RULES.get(lang, LANGUAGE_RULES["ja"])
+    return BASE_PROMPT + LANGUAGE_RULES.get(lang, LANGUAGE_RULES[DEFAULT_LANG])
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -183,7 +183,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang_counts = defaultdict(int)
     total_msgs = 0
     for u in users.values():
-        lang_counts[u.get("lang", "ja")] += 1
+        lang_counts[u.get("lang", DEFAULT_LANG)] += 1
         total_msgs += u.get("total_messages", 0)
     premium_count = sum(1 for u in users.values() if u.get("premium"))
 
@@ -236,8 +236,8 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = user_language.get(user_id, DEFAULT_LANG)
 
     if user_id in premium_users:
-        already = {"ja": "もうプレミアムだよ。", "ko": "이미 프리미엄이야.", "en": "You're already premium."}
-        await update.message.reply_text(already.get(lang, already["ja"]))
+        already = CHAR.get("already_premium", {"en": "You're already premium."})
+        await update.message.reply_text(already.get(lang, list(already.values())[0]))
         return
 
     titles = {k: CHAR["premium_title"] for k in CHAR["language_rules"]}
@@ -245,8 +245,8 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await context.bot.send_invoice(
         chat_id=user_id,
-        title=titles.get(lang, titles["ja"]),
-        description=descriptions.get(lang, descriptions["ja"]),
+        title=titles.get(lang, list(titles.values())[0]),
+        description=descriptions.get(lang, list(descriptions.values())[0]),
         payload="premium_subscription",
         provider_token="",  # empty for Telegram Stars
         currency="XTR",  # Telegram Stars currency
@@ -270,7 +270,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
 
     lang = user_language.get(user_id, DEFAULT_LANG)
     success = CHAR["premium_success"]
-    await update.message.reply_text(success.get(lang, success["ja"]))
+    await update.message.reply_text(success.get(lang, list(success.values())[0]))
 
 
 PHOTO_CAPTIONS = CHAR.get("photo_captions", {})
@@ -303,7 +303,7 @@ async def maybe_send_photo(update: Update, user_id: int) -> None:
     lang = user_language.get(user_id, DEFAULT_LANG)
     captions = PHOTO_CAPTIONS.get(chosen.stem)
     if captions:
-        caption = captions.get(lang, captions["ja"])
+        caption = captions.get(lang, list(captions.values())[0])
     else:
         caption = chosen.stem
 
@@ -320,7 +320,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if not check_daily_limit(user_id):
         lang = user_language.get(user_id, DEFAULT_LANG)
-        await update.message.reply_text(LIMIT_MESSAGES.get(lang, LIMIT_MESSAGES["ja"]))
+        await update.message.reply_text(LIMIT_MESSAGES.get(lang, list(LIMIT_MESSAGES.values())[0]))
         return
 
     conversation_history[user_id].append({"role": "user", "content": user_message})
@@ -367,18 +367,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chosen = random.choice(images)
                 captions = PHOTO_CAPTIONS.get(chosen.stem)
                 if captions:
-                    caption = captions.get(lang, captions["ja"])
+                    caption = captions.get(lang, list(captions.values())[0])
                 else:
                     caption = chosen.stem
-                teaser_suffix = {
-                    "ja": "\n\n...続きが気になるなら /subscribe",
-                    "ko": "\n\n...더 얘기하고 싶으면 /subscribe",
+                teaser_suffix = CHAR.get("teaser_suffix", {
                     "en": "\n\n...Want to talk more? /subscribe",
-                }
+                })
                 await update.message.chat.send_paid_media(
                     star_count=PHOTO_STAR_PRICE,
                     media=[InputPaidMediaPhoto(media=open(chosen, "rb"))],
-                    caption=caption + teaser_suffix.get(lang, teaser_suffix["ja"]),
+                    caption=caption + teaser_suffix.get(lang, list(teaser_suffix.values())[0]),
                 )
 
     except Exception:
