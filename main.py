@@ -140,15 +140,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     conversation_history[user_id].clear()
     user_language.pop(user_id, None)
 
-    keyboard = [
-        [
-            InlineKeyboardButton("日本語", callback_data="lang_ja"),
-            InlineKeyboardButton("한국어", callback_data="lang_ko"),
-            InlineKeyboardButton("English", callback_data="lang_en"),
-        ]
+    lang_labels = {
+        "ja": "日本語", "ko": "한국어", "en": "English",
+        "es": "Español", "it": "Italiano", "fr": "Français",
+        "pt": "Português", "de": "Deutsch", "zh": "中文",
+    }
+    buttons = [
+        InlineKeyboardButton(lang_labels.get(code, code), callback_data=f"lang_{code}")
+        for code in LANGUAGE_RULES
     ]
+    keyboard = [buttons]
     await update.message.reply_text(
-        "언어를 선택해주세요 / 言語を選んでください / Choose your language:",
+        "Choose your language:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
