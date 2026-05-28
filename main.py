@@ -54,7 +54,7 @@ daily_usage: dict[int, dict] = {}
 # --- Persistent storage ---
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
-DB_PATH = DATA_DIR / "db.json"
+DB_PATH = DATA_DIR / f"db_{CHARACTER}.json"
 
 
 def load_db() -> dict:
